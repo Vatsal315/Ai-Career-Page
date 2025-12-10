@@ -131,3 +131,6 @@ dist
 
 # Compiled TypeScript files
 dist/ 
+
+# Firebase/secret JSON keys
+src/config/*.json
