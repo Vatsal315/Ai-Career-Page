@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,7 +13,8 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { motion } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { getResumeTemplateById } from "@/utils/resumeTemplates";
 
 interface ResumeInputData {
   personalInfo: {
@@ -194,6 +195,7 @@ const mockResumeData: ResumeInputData = {
 const ResumeBuilder = () => {
   const { user, token, isLoading: authLoading } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState("personal");
   const [userInfo, setUserInfo] = useState<ResumeInputData>(initialUserInfo);
   const [skillInput, setSkillInput] = useState("");
@@ -202,6 +204,216 @@ const ResumeBuilder = () => {
   const [generatedText, setGeneratedText] = useState<string | null>(null);
   const [generatedResumeId, setGeneratedResumeId] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
+  const appliedTemplateRef = useRef(false);
+
+  const templateId = (searchParams.get("template") as any) || "classic-ats";
+
+  const sectionTitle = (title: string) => {
+    if (templateId === "classic-ats") return title.toUpperCase();
+    return title;
+  };
+
+  const HeaderBlock = () => {
+    const name = userInfo.personalInfo.name || "Your Name";
+    const loc = userInfo.personalInfo.address || "";
+    const contactParts = [
+      userInfo.personalInfo.phone,
+      userInfo.personalInfo.email,
+      userInfo.personalInfo.linkedin,
+      userInfo.personalInfo.portfolio,
+    ].filter(Boolean);
+    const contact = contactParts.join("  |  ");
+
+    if (templateId === "modern-blue") {
+      return (
+        <div className="border-b pb-4">
+          <div className="flex items-start justify-between gap-6">
+            <div>
+              <div className="text-3xl font-bold text-blue-700">{name}</div>
+            </div>
+            <div className="text-right text-xs text-gray-600 space-y-1">
+              {loc && <div>{loc}</div>}
+              {contact && <div className="break-words max-w-[240px]">{contact}</div>}
+            </div>
+          </div>
+          <div className="mt-4 h-[2px] bg-blue-600" />
+        </div>
+      );
+    }
+
+    if (templateId === "minimal-serif") {
+      return (
+        <div className="text-center border-b pb-4">
+          <div className="text-4xl font-bold">{name}</div>
+          <div className="mt-2 text-xs text-gray-600">
+            {[loc, contact].filter(Boolean).join("  |  ")}
+          </div>
+        </div>
+      );
+    }
+
+    // classic-ats
+    return (
+      <div className="text-center border-b pb-4">
+        <div className="text-4xl font-bold">{name}</div>
+        <div className="mt-2 text-xs text-gray-600">
+          {[loc, contact].filter(Boolean).join("  |  ")}
+        </div>
+      </div>
+    );
+  };
+
+  const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
+    <div className="mt-6">
+      <div className={`font-bold ${templateId === "modern-blue" ? "text-blue-700" : "text-gray-900"}`}>
+        {sectionTitle(title)}
+      </div>
+      <div className={`mt-1 h-px ${templateId === "modern-blue" ? "bg-blue-600" : "bg-gray-300"}`} />
+      <div className="mt-3">{children}</div>
+    </div>
+  );
+
+  const ResumePreview = () => {
+    const fontClass =
+      templateId === "minimal-serif" || templateId === "classic-ats" ? "font-serif" : "font-sans";
+
+    return (
+      <div className={`bg-white ${fontClass}`}>
+        <HeaderBlock />
+
+        {userInfo.summary?.trim() && (
+          <Section title="Summary">
+            <p className="text-sm leading-relaxed text-gray-900">{userInfo.summary}</p>
+          </Section>
+        )}
+
+        {userInfo.education?.length > 0 && (
+          <Section title="Education">
+            <div className="space-y-4">
+              {userInfo.education.map((edu, idx) => (
+                <div key={`edu-${idx}`}>
+                  <div className="flex justify-between gap-4">
+                    <div className="font-semibold text-sm">
+                      {edu.institution}
+                    </div>
+                    <div className="text-sm text-gray-700 whitespace-nowrap">
+                      {[edu.startDate, edu.endDate].filter(Boolean).join(" - ")}
+                    </div>
+                  </div>
+                  <div className="text-sm">
+                    <span className="italic">
+                      {edu.degree}
+                      {edu.fieldOfStudy ? ` in ${edu.fieldOfStudy}` : ""}
+                    </span>
+                  </div>
+                  {edu.details?.length ? (
+                    <ul className="mt-1 list-disc pl-5 text-sm space-y-1">
+                      {edu.details.map((d, i) => (
+                        <li key={`edu-${idx}-d-${i}`}>{d}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </Section>
+        )}
+
+        {userInfo.experience?.length > 0 && (
+          <Section title="Experience">
+            <div className="space-y-6">
+              {userInfo.experience.map((exp, idx) => (
+                <div key={`exp-${idx}`}>
+                  <div className="flex justify-between gap-4">
+                    <div className="font-semibold text-sm">
+                      {exp.company}
+                      {exp.location ? <span className="text-gray-600">, {exp.location}</span> : null}
+                    </div>
+                    <div className="text-sm text-gray-700 whitespace-nowrap">
+                      {[exp.startDate, exp.endDate].filter(Boolean).join(" - ")}
+                    </div>
+                  </div>
+                  <div className="text-sm italic">{exp.jobTitle}</div>
+                  {exp.responsibilities?.length ? (
+                    <ul className="mt-2 list-disc pl-5 text-sm space-y-1">
+                      {exp.responsibilities.map((r, i) => (
+                        <li key={`exp-${idx}-r-${i}`}>{r}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </Section>
+        )}
+
+        {userInfo.projects?.length ? (
+          <Section title="Projects">
+            <div className="space-y-4">
+              {userInfo.projects.map((p, idx) => (
+                <div key={`proj-${idx}`}>
+                  <div className="font-semibold text-sm">
+                    {p.name}
+                    {p.technologies?.length ? (
+                      <span className="text-gray-600 font-normal"> | {p.technologies.join(", ")}</span>
+                    ) : null}
+                  </div>
+                  <p className="text-sm leading-relaxed">{p.description}</p>
+                  {p.link ? <div className="text-xs text-blue-700">{p.link}</div> : null}
+                </div>
+              ))}
+            </div>
+          </Section>
+        ) : null}
+
+        {userInfo.skills?.length ? (
+          <Section title="Technical Skills">
+            <div className="space-y-2 text-sm">
+              {userInfo.skills.map((s, idx) => (
+                <div key={`skill-${idx}`}>
+                  <span className="font-semibold">{s.category || "Skills"}:</span>{" "}
+                  <span>{(s.items || []).join(", ")}</span>
+                </div>
+              ))}
+            </div>
+          </Section>
+        ) : null}
+      </div>
+    );
+  };
+
+  useEffect(() => {
+    const templateId = searchParams.get("template");
+    if (!templateId) return;
+    if (appliedTemplateRef.current) return;
+
+    try {
+      const t = getResumeTemplateById(templateId);
+      if (t?.data) {
+        setUserInfo(t.data as unknown as ResumeInputData);
+        setGeneratedText(null);
+        setGeneratedResumeId(null);
+        setActiveTab("personal");
+        appliedTemplateRef.current = true;
+        toast.success("Template loaded — start editing your resume!");
+        return;
+      }
+
+      // Backward compatibility: older flow used sessionStorage
+      const raw = sessionStorage.getItem("acf_resume_template");
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { id?: string; data?: ResumeInputData };
+      if (parsed?.id !== templateId || !parsed?.data) return;
+      setUserInfo(parsed.data);
+      setGeneratedText(null);
+      setGeneratedResumeId(null);
+      setActiveTab("personal");
+      appliedTemplateRef.current = true;
+      toast.success("Template loaded — start editing your resume!");
+    } catch {
+      // ignore invalid payload
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     let filled = 0;
@@ -352,7 +564,9 @@ const ResumeBuilder = () => {
     setGeneratedResumeId(null);
 
     try {
-      const response = await apiClient.post('/api/builder/generate', userInfo);
+      const templateId = searchParams.get("template") || undefined;
+      const payload = templateId ? { ...userInfo, templateId } : userInfo;
+      const response = await apiClient.post('/builder/generate', payload);
 
       if (response.status === 201 && response.data.generatedText && response.data.generatedResumeId) {
         setGeneratedText(response.data.generatedText);
@@ -377,22 +591,40 @@ const ResumeBuilder = () => {
     }
   };
 
-  const downloadResume = () => {
+  const downloadResume = async () => {
     if (!generatedResumeId) {
       toast.error("No generated resume ID found. Please generate a resume first.");
       return;
     }
-    if (!apiClient.defaults.baseURL) {
-      toast.error("API client base URL is not configured.");
-      console.error("apiClient.defaults.baseURL is missing");
-      return;
+
+    try {
+      toast.info("Preparing PDF download...");
+      
+      const templateId = searchParams.get("template") || "classic-ats";
+
+      // Generate PDF from current form input to guarantee template formatting
+      const response = await apiClient.post(
+        "/builder/download-pdf",
+        { templateId, inputData: userInfo },
+        { responseType: "blob" }
+      );
+
+      // Create a blob URL and trigger download
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `resume-${templateId}-${generatedResumeId}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
+      toast.success("Resume downloaded successfully!");
+    } catch (error: any) {
+      console.error("Download error:", error);
+      toast.error(error.response?.data?.message || "Failed to download resume");
     }
-
-    const downloadUrl = `${apiClient.defaults.baseURL}/api/builder/download/${generatedResumeId}`;
-    toast.info("Initiating PDF download...");
-    console.log(`Attempting to download PDF from: ${downloadUrl}`);
-
-    window.open(downloadUrl, '_blank');
   };
 
   return (
@@ -1048,12 +1280,14 @@ const ResumeBuilder = () => {
                   <FileText className="h-5 w-5 mr-2" /> Generated Resume
                 </CardTitle>
                 <CardDescription className="text-blue-100">
-                  Review your AI-generated resume content below
+                  Your resume is formatted in the selected template (not raw AI text)
                 </CardDescription>
               </CardHeader>
               <CardContent className="p-0">
-                <ScrollArea className="h-[60vh] w-full p-6 font-mono text-sm leading-relaxed">
-                  <div className="whitespace-pre-wrap">{generatedText}</div>
+                <ScrollArea className="h-[60vh] w-full p-6 bg-white">
+                  <div className="mx-auto max-w-3xl border rounded-md p-8 shadow-sm">
+                    <ResumePreview />
+                  </div>
                 </ScrollArea>
               </CardContent>
             </Card>

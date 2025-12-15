@@ -1,13 +1,22 @@
 import axios from 'axios';
 
-// Retrieve the API base URL from environment variables
-// Prefer VITE_API_BASE_URL but fall back to VITE_BACKEND_API_URL for compatibility
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_BACKEND_API_URL;
+// Resolve API base URL with sensible dev fallback so calls don't silently hit
+// the Vite dev server (8080) when env vars are missing.
+const defaultDevUrl = import.meta.env.DEV ? 'http://localhost:3000/api' : undefined;
+let API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  import.meta.env.VITE_BACKEND_API_URL ||
+  defaultDevUrl;
+
+// Ensure baseURL includes /api if not already present
+if (API_BASE_URL && !API_BASE_URL.endsWith('/api')) {
+  API_BASE_URL = `${API_BASE_URL}/api`;
+}
 
 if (!API_BASE_URL) {
-  console.error("Error: VITE_API_BASE_URL environment variable is not set.");
-  // You might want to throw an error here or provide a default
-  // depending on how critical this is for your app to function.
+  console.error(
+    'Error: API base URL is not set. Configure VITE_API_BASE_URL or VITE_BACKEND_API_URL.'
+  );
 }
 
 // Create an Axios instance with default configuration
@@ -21,6 +30,10 @@ const apiClient = axios.create({
 // Request interceptor to attach Firebase ID Token
 apiClient.interceptors.request.use(
   (config) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/87199f04-e26a-4732-af6e-c50d61b27704',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/lib/api.ts:request',message:'axios request',data:{baseURL:String(config.baseURL||''),url:String(config.url||''),method:String(config.method||''),hasToken:Boolean(localStorage.getItem('firebaseIdToken')),tokenLen:(localStorage.getItem('firebaseIdToken')||'').length},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+
     // Get the token from local storage (stored by AuthContext)
     const token = localStorage.getItem('firebaseIdToken');
     if (token) {
@@ -41,8 +54,17 @@ apiClient.interceptors.request.use(
 
 // Add a response interceptor for global error handling
 apiClient.interceptors.response.use(
-  (response) => response, // Return successful responses directly
+  (response) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/87199f04-e26a-4732-af6e-c50d61b27704',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/lib/api.ts:response',message:'axios response',data:{url:String(response.config?.url||''),status:Number(response.status)},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
+    return response; // Return successful responses directly
+  },
   (error) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/87199f04-e26a-4732-af6e-c50d61b27704',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/lib/api.ts:error',message:'axios error',data:{url:String(error?.config?.url||''),status:Number(error?.response?.status||0),hasResponse:Boolean(error?.response),hasRequest:Boolean(error?.request),message:String(error?.message||''),responseMessage:String(error?.response?.data?.message||''),responseKeys:error?.response?.data?Object.keys(error.response.data).slice(0,10):[]},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
+
     // Handle common errors globally
     if (error.response) {
       const { status } = error.response;

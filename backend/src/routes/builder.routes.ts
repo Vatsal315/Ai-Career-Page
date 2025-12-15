@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { authenticateToken } from '../middleware/auth.middleware';
 // Import controller
-import { generateResume, downloadGeneratedResume, getGeneratedResumes } from '../controllers/builder.controller';
+import { generateResume, downloadGeneratedResume, downloadResumePdf, getGeneratedResumes } from '../controllers/builder.controller';
 
 const router = Router();
 
@@ -24,6 +24,13 @@ router.get(
     '/download/:generatedResumeId',
     authenticateToken, // Ensure user is authenticated
     downloadGeneratedResume // Use the download controller function
+);
+
+// POST /api/builder/download-pdf - Download PDF from current inputData + templateId
+router.post(
+    '/download-pdf',
+    authenticateToken,
+    downloadResumePdf
 );
 
 export default router; 

@@ -9,9 +9,8 @@ const router = Router();
 // POST /api/match/resume-job - Compare a resume (file or text) to a job description
 router.post(
     '/resume-job',
-    authenticateToken, // Ensure user is authenticated
     upload.single('resumeFile'), // Handle single file upload named 'resumeFile'
-    matchResumeToJob // Use the controller function
+    matchResumeToJob // Use the controller function (works for anonymous users)
 );
 
 export default router; 

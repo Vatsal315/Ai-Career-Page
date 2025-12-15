@@ -8,28 +8,23 @@ interface ApiError extends Error {
         data?: { message?: string; };
     };
 }
-import admin from 'firebase-admin';
-import { db } from '../config/firebase.config'; // Import Firestore instance
 import { Resume } from '../models/resume.model'; // Import Resume interface
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai'; // Import Gemini AI
+import { getResume, getResumeForUser } from '../utils/localStorage'; // Use local storage
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 // Initialize Google Generative AI
-// Ensure GEMINI_API_KEY is set in your environment variables
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" }); // Use the same model as resume analysis
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" }); // Use Gemini 2.0 Flash
 
 interface CustomRequest extends Request {
-    user?: admin.auth.DecodedIdToken;
+    user?: any; // Simplified for local storage
 }
 
 // Controller to handle cover letter generation requests
 export const generateCoverLetterController = async (req: CustomRequest, res: Response): Promise<void> => {
-    // Ensure user is authenticated (middleware should have already done this)
-    if (!req.user || !req.user.uid) {
-        res.status(401).json({ message: 'Unauthorized: User not authenticated or UID missing.' });
-        return;
-    }
-    const userId = req.user.uid;
+    // Allow both authenticated and anonymous users
+    const userId = req.user?.uid || 'anonymous';
 
     const { 
         selectedResume, // This is the resume ID
@@ -49,22 +44,19 @@ export const generateCoverLetterController = async (req: CustomRequest, res: Res
 
     try {
         // 1. Fetch resume content based on selectedResume ID and user ID
-        const resumeRef = db.collection('resumes').doc(selectedResume);
-        const resumeDoc = await resumeRef.get();
+        const resumeData = getResumeForUser(selectedResume, userId, { claimAnonymous: true });
 
-        if (!resumeDoc.exists) {
-            console.warn(`[CoverLetterGen] Resume not found: ID ${selectedResume} for user ${userId}`);
-            res.status(404).json({ message: 'Selected resume not found.' });
-            return;
-        }
-
-        const resumeData = resumeDoc.data() as Resume;
-
-        // Verify ownership of the resume
-        if (resumeData.userId !== userId) {
-            console.warn(`[CoverLetterGen] User ${userId} attempted to access unauthorized resume ${selectedResume}`);
-            res.status(403).json({ message: 'Forbidden: You do not have permission to use this resume.' });
-            return;
+        if (!resumeData) {
+            const exists = getResume(selectedResume);
+            if (exists) {
+                console.warn(`[CoverLetterGen] User ${userId} attempted to access unauthorized resume ${selectedResume}`);
+                res.status(403).json({ message: 'Forbidden: You do not have permission to use this resume.' });
+                return;
+            } else {
+                console.warn(`[CoverLetterGen] Resume not found: ID ${selectedResume} for user ${userId}`);
+                res.status(404).json({ message: 'Selected resume not found.' });
+                return;
+            }
         }
 
         if (!resumeData.parsedText || resumeData.parsedText.trim() === '') {
@@ -169,3 +161,110 @@ export const generateCoverLetterController = async (req: CustomRequest, res: Res
         }
     }
 }; 
+
+export const downloadCoverLetterPdfController = async (req: CustomRequest, res: Response): Promise<void> => {
+    try {
+        const { coverLetterText, companyName, roleName } = req.body || {};
+
+        if (!coverLetterText || typeof coverLetterText !== 'string' || !coverLetterText.trim()) {
+            res.status(400).json({ message: 'Bad Request: Missing coverLetterText' });
+            return;
+        }
+
+        const safeSlug = (value: unknown) =>
+            String(value || '')
+                .trim()
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, '-')
+                .replace(/(^-|-$)/g, '')
+                .slice(0, 60) || 'cover-letter';
+
+        const fileName = `cover-letter-${safeSlug(companyName)}-${safeSlug(roleName)}.pdf`;
+
+        // --- Create PDF using pdf-lib ---
+        const pdfDoc = await PDFDocument.create();
+        const font = await pdfDoc.embedFont(StandardFonts.TimesRoman);
+        const fontSize = 12;
+        const margin = 54;
+        const lineHeight = fontSize * 1.35;
+
+        const createPage = () => {
+            const page = pdfDoc.addPage();
+            const { width, height } = page.getSize();
+            return { page, width, height, x: margin, yStart: height - margin };
+        };
+
+        let { page, width, height, x, yStart } = createPage();
+        let y = yStart;
+        const maxWidth = width - margin * 2;
+
+        const drawLine = (text: string) => {
+            if (y < margin + lineHeight) {
+                ({ page, width, height, x, yStart } = createPage());
+                y = yStart;
+            }
+            page.drawText(text, { x, y, font, size: fontSize, color: rgb(0, 0, 0) });
+            y -= lineHeight;
+        };
+
+        // Normalize and wrap paragraphs/lines
+        const rawLines = coverLetterText.replace(/\r\n/g, '\n').split('\n');
+        for (const rawLine of rawLines) {
+            const line = rawLine.trimEnd();
+            if (!line.trim()) {
+                // Blank line => paragraph spacing
+                y -= lineHeight * 0.6;
+                if (y < margin + lineHeight) {
+                    ({ page, width, height, x, yStart } = createPage());
+                    y = yStart;
+                }
+                continue;
+            }
+
+            const words = line.split(/\s+/);
+            let current = '';
+            for (const word of words) {
+                const test = current ? `${current} ${word}` : word;
+                const testWidth = font.widthOfTextAtSize(test, fontSize);
+                if (testWidth <= maxWidth) {
+                    current = test;
+                } else {
+                    if (current) drawLine(current);
+                    // word might itself be longer than maxWidth; hard-split if needed
+                    if (font.widthOfTextAtSize(word, fontSize) > maxWidth) {
+                        let chunk = '';
+                        for (const ch of word) {
+                            const next = chunk + ch;
+                            if (font.widthOfTextAtSize(next, fontSize) <= maxWidth) {
+                                chunk = next;
+                            } else {
+                                drawLine(chunk);
+                                chunk = ch;
+                            }
+                        }
+                        if (chunk) {
+                            current = chunk;
+                        } else {
+                            current = '';
+                        }
+                    } else {
+                        current = word;
+                    }
+                }
+            }
+            if (current) drawLine(current);
+        }
+
+        const pdfBytes = await pdfDoc.save();
+
+        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.status(200).send(Buffer.from(pdfBytes));
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        console.error('[CoverLetterPDF] Error generating PDF:', message);
+        if (!res.headersSent) {
+            res.status(500).json({ message: 'Internal server error during cover letter PDF generation' });
+        }
+    }
+};

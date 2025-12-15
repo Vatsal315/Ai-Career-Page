@@ -13,32 +13,24 @@ interface AnalysisResult {
     matchedSkills?: string[];
     // Add other properties as they become clear from AI response structure
 }
-import admin from 'firebase-admin';
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
 import { Resume } from '../models/resume.model'; // To potentially fetch resume by ID
-// Import initialized db from config
-import { db } from '../config/firebase.config';
 import pdfParse from 'pdf-parse'; // For parsing PDF files
 import mammoth from 'mammoth'; // For parsing DOCX files
+import { getResume, getResumeForUser } from '../utils/localStorage'; // Use local storage
 
 interface CustomRequest extends Request {
-    user?: admin.auth.DecodedIdToken;
+    user?: any; // Simplified for local storage
 }
-
-// const db = admin.firestore(); // Removed: Use imported db
 
 // Re-initialize AI client (Consider centralizing this later)
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
-// const model = genAI.getGenerativeModel({ model: "gemini-pro" }); // Old model
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" }); // Use current recommended model
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" }); // Use Gemini 2.0 Flash
 
 export const matchResumeToJob = async (req: CustomRequest, res: Response): Promise<void> => {
     try {
-        if (!req.user) {
-            res.status(401).json({ message: 'Unauthorized: User not authenticated' });
-            return;
-        }
-        const userId = req.user.uid;
+        // Allow both authenticated and anonymous users
+        const userId = req.user ? req.user.uid : 'anonymous';
 
         // Destructure jobDescription from req.body. resumeId and resumeText are no longer primary inputs from frontend.
         const { jobDescription, resumeId, resumeText: fallbackResumeText } = req.body;
@@ -83,17 +75,17 @@ export const matchResumeToJob = async (req: CustomRequest, res: Response): Promi
         } else if (resumeId) { // Fallback if frontend or API caller still uses resumeId
             console.log(`[match]: Fetching resume by ID ${resumeId} for user ${userId} (fallback)`);
             resumeSourceDescription = `ID: ${resumeId}`;
-            const resumeRef = db.collection('resumes').doc(resumeId);
-            const resumeDoc = await resumeRef.get();
+            const resumeData = getResumeForUser(resumeId, userId, { claimAnonymous: true });
 
-            if (!resumeDoc.exists) {
-                res.status(404).json({ message: 'Resume not found for the given ID' });
-                return;
-            }
-            const resumeData = resumeDoc.data() as Resume;
-            if (resumeData.userId !== userId) {
-                res.status(403).json({ message: 'Forbidden: You do not own this resume' });
-                return;
+            if (!resumeData) {
+                const exists = getResume(resumeId);
+                if (exists) {
+                    res.status(403).json({ message: 'Forbidden: You do not own this resume' });
+                    return;
+                } else {
+                    res.status(404).json({ message: 'Resume not found for the given ID' });
+                    return;
+                }
             }
             if (!resumeData.parsedText) {
                 res.status(400).json({ message: 'Cannot match: Resume text is missing or empty for the given ID' });

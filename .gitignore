@@ -24,3 +24,12 @@ dist-ssr
 
 # Environment Variables
 .env*
+
+# Secrets / local-only files
+backend/keys/
+
+# Local data files (generated during development)
+backend/data/
+
+# Generated artifacts
+tmp_resume.docx

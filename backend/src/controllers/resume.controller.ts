@@ -17,25 +17,20 @@ interface ResumeAnalysisResult {
     summary?: string;
     // Add other properties as they become clear from AI response structure
 }
-// import admin from 'firebase-admin'; // Keep for FieldValue type
 import pdfParse from 'pdf-parse';
 import mammoth from 'mammoth';
 import { Resume } from '../models/resume.model';
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
-// Import initialized db from config
-import { db } from '../config/firebase.config';
-import admin from 'firebase-admin'; // Still needed for admin.firestore.FieldValue
+// Use local storage instead of Firestore
+import { addResume, getResume, getResumeForUser, updateResume, getResumesByUser } from '../utils/localStorage';
 
 interface CustomRequest extends Request {
-    user?: admin.auth.DecodedIdToken;
+    user?: any; // Simplified for local storage
 }
-
-// const db = admin.firestore(); // Removed: Use imported db
 
 // Initialize Google Generative AI 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
-// const model = genAI.getGenerativeModel({ model: "gemini-pro" }); // Old model
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" }); // Use current recommended model
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" }); // Use Gemini 2.0 Flash
 
 // Placeholder for uploadResume function
 export const uploadResume = async (req: CustomRequest, res: Response): Promise<void> => {
@@ -70,20 +65,20 @@ export const uploadResume = async (req: CustomRequest, res: Response): Promise<v
         }
 
         // Create Resume data object
-        const resumeData: Omit<Resume, 'id'> = {
+        const resumeData = {
             userId: userId,
             originalFilename: file.originalname,
             parsedText: parsedText,
-            uploadTimestamp: admin.firestore.FieldValue.serverTimestamp() as admin.firestore.Timestamp,
-            // analysis field will be added later in Phase 3
+            uploadTimestamp: new Date().toISOString(),
+            // analysis field will be added later
         };
 
-        // Use imported db service
-        const resumeRef = await db.collection('resumes').add(resumeData);
-        console.log(`[upload]: Resume data saved to Firestore with ID: ${resumeRef.id}`);
+        // Use local storage
+        const resumeId = addResume(resumeData);
+        console.log(`[upload]: Resume data saved locally with ID: ${resumeId}`);
 
         // Respond with the ID of the newly created resume document
-        res.status(201).json({ message: 'Resume uploaded and parsed successfully', resumeId: resumeRef.id });
+        res.status(201).json({ message: 'Resume uploaded and parsed successfully', resumeId: resumeId });
 
     } catch (error: unknown) {
         if (error instanceof Error) {
@@ -104,21 +99,18 @@ export const analyzeResume = async (req: CustomRequest, res: Response): Promise<
             return;
         }
 
-        // Use imported db service
-        const resumeRef = db.collection('resumes').doc(resumeId);
-        const resumeDoc = await resumeRef.get();
+        // Use local storage (and claim anonymous resumes when user is authenticated)
+        const resumeData = getResumeForUser(resumeId, userId, { claimAnonymous: true });
 
-        if (!resumeDoc.exists) {
-            res.status(404).json({ message: 'Resume not found' });
-            return;
-        }
-
-        const resumeData = resumeDoc.data() as Resume;
-
-        // Verify ownership, allowing anonymous users to analyze anonymously uploaded resumes
-        if (resumeData.userId !== userId && !(resumeData.userId === 'anonymous' && userId === 'anonymous')) {
-            res.status(403).json({ message: 'Forbidden: You do not own this resume' });
-            return;
+        if (!resumeData) {
+            const exists = getResume(resumeId);
+            if (exists) {
+                res.status(403).json({ message: 'Forbidden: You do not own this resume' });
+                return;
+            } else {
+                res.status(404).json({ message: 'Resume not found' });
+                return;
+            }
         }
 
         if (!resumeData.parsedText || resumeData.parsedText.trim() === '') {
@@ -203,16 +195,16 @@ export const analyzeResume = async (req: CustomRequest, res: Response): Promise<
             }
         }
 
-        // --- Update Firestore --- 
+        // --- Update local storage --- 
         const analysisUpdateData = {
             analysis: {
                 ...analysisResult, // Spread the parsed data
-                analysisTimestamp: admin.firestore.FieldValue.serverTimestamp() // Keep admin namespace
+                analysisTimestamp: new Date().toISOString()
             }
         };
-        // Use resumeRef obtained earlier
-        await resumeRef.update(analysisUpdateData);
-        console.log(`[analyze]: Analysis results updated in Firestore for resume: ${resumeId}`);
+        // Update local storage
+        updateResume(resumeId, analysisUpdateData);
+        console.log(`[analyze]: Analysis results updated locally for resume: ${resumeId}`);
 
         res.status(200).json({ message: 'Resume analyzed successfully', analysis: analysisUpdateData.analysis });
 
@@ -233,36 +225,36 @@ export const analyzeResume = async (req: CustomRequest, res: Response): Promise<
 // --- Get Uploaded Resumes Function ---
 export const getUploadedResumes = async (req: CustomRequest, res: Response): Promise<void> => {
     try {
-        if (!req.user) {
-            res.status(401).json({ message: 'Unauthorized: User not authenticated' });
-            return;
-        }
-        const userId = req.user.uid;
+        // Allow both authenticated and anonymous users
+        const userId = req.user?.uid || 'anonymous';
 
         console.log(`[getResumes]: Fetching uploaded resumes for user ${userId}`);
 
-        const resumesSnapshot = await db.collection('resumes')
-            .where('userId', '==', userId)
-            .orderBy('uploadTimestamp', 'desc') // Order by newest first
-            .get();
+        const userResumes = getResumesByUser(userId);
 
-        if (resumesSnapshot.empty) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/87199f04-e26a-4732-af6e-c50d61b27704',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'backend/src/controllers/resume.controller.ts:getUploadedResumes',message:'getUploadedResumes',data:{userType:userId==='anonymous'?'anonymous':'authed',count:Array.isArray(userResumes)?userResumes.length:-1},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
+
+        if (userResumes.length === 0) {
             console.log(`[getResumes]: No uploaded resumes found for user ${userId}`);
             res.status(200).json({ resumes: [] }); // Return empty array, not an error
             return;
         }
 
-        const resumes = resumesSnapshot.docs.map(doc => {
-            const data = doc.data() as Resume;
-            // Return only necessary fields to the frontend
-            return {
-                id: doc.id,
-                originalFilename: data.originalFilename,
-                uploadTimestamp: data.uploadTimestamp,
-                overallScore: data.analysis?.overallScore, // Include score if available
-                analysisTimestamp: data.analysis?.analysisTimestamp
-            };
-        });
+        // Sort by upload timestamp (newest first)
+        const resumes = userResumes
+            .sort((a, b) => new Date(b.uploadTimestamp).getTime() - new Date(a.uploadTimestamp).getTime())
+            .map(data => {
+                // Return only necessary fields to the frontend
+                return {
+                    id: data.id,
+                    originalFilename: data.originalFilename,
+                    uploadTimestamp: data.uploadTimestamp,
+                    overallScore: data.analysis?.overallScore, // Include score if available
+                    analysisTimestamp: data.analysis?.analysisTimestamp
+                };
+            });
 
         console.log(`[getResumes]: Found ${resumes.length} uploaded resumes for user ${userId}`);
         res.status(200).json({ resumes });
@@ -275,6 +267,45 @@ export const getUploadedResumes = async (req: CustomRequest, res: Response): Pro
             } else {
                 res.status(500).json({ message: 'Internal server error fetching uploaded resumes', error: error.message });
             }
+        }
+    }
+};
+
+// --- Get Resume Details by ID (includes analysis if present) ---
+export const getResumeById = async (req: CustomRequest, res: Response): Promise<void> => {
+    try {
+        const userId = req.user?.uid || 'anonymous';
+        const { resumeId } = req.params;
+
+        if (!resumeId) {
+            res.status(400).json({ message: 'Bad Request: Missing resumeId parameter' });
+            return;
+        }
+
+        const resumeData = getResumeForUser(resumeId, userId, { claimAnonymous: true });
+        if (!resumeData) {
+            const exists = getResume(resumeId);
+            if (exists) {
+                res.status(403).json({ message: 'Forbidden: You do not own this resume' });
+                return;
+            } else {
+                res.status(404).json({ message: 'Resume not found' });
+                return;
+            }
+        }
+
+        res.status(200).json({
+            resume: {
+                id: resumeData.id,
+                originalFilename: resumeData.originalFilename,
+                uploadTimestamp: resumeData.uploadTimestamp,
+                analysis: resumeData.analysis || null
+            }
+        });
+    } catch (error: unknown) {
+        if (error instanceof Error) {
+            console.error(`[getResumeById]: Error fetching resume ${req.params.resumeId} for user ${req.user?.uid}:`, error.message);
+            res.status(500).json({ message: 'Internal server error fetching resume', error: error.message });
         }
     }
 };

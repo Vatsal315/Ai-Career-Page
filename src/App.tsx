@@ -18,6 +18,7 @@ import DashboardHome from "./pages/dashboard/DashboardHome";
 import CoverLetterGenerator from "./pages/dashboard/CoverLetterGenerator";
 import MyResumes from "./pages/dashboard/MyResumes";
 import HelpAndTips from "./pages/dashboard/HelpAndTips";
+import ResumeTemplates from "./pages/dashboard/ResumeTemplates";
 import PageRefresh from "./components/PageRefresh";
 
 const queryClient = new QueryClient();
@@ -116,6 +117,7 @@ const App = () => (
               <Route path="builder" element={<ResumeBuilder />} />
               <Route path="job-match" element={<JobMatch />} />
               <Route path="cover-letter" element={<CoverLetterGenerator />} />
+              <Route path="templates" element={<ResumeTemplates />} />
               <Route path="my-resumes" element={<MyResumes />} />
               <Route path="help" element={<HelpAndTips />} />
             </Route>

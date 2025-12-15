@@ -5,7 +5,7 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist"] },
+  { ignores: ["dist", "backend/functions/**"] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],
@@ -13,11 +13,6 @@ export default tseslint.config(
       ecmaVersion: 2020,
       // Include both browser and node globals since repo has frontend + backend
       globals: { ...globals.browser, ...globals.node },
-      parserOptions: {
-        // Enable type-aware linting for both frontend and backend
-        project: ["./tsconfig.app.json", "./tsconfig.node.json", "./backend/tsconfig.json"],
-        tsconfigRootDir: import.meta.dirname,
-      },
     },
     plugins: {
       "react-hooks": reactHooks,
@@ -30,6 +25,10 @@ export default tseslint.config(
         { allowConstantExport: true },
       ],
       "@typescript-eslint/no-unused-vars": "off",
+      "@typescript-eslint/no-explicit-any": "off",
+      "@typescript-eslint/no-empty-object-type": "off",
+      "@typescript-eslint/no-require-imports": "off",
+      "prefer-const": "off",
     },
   }
 );

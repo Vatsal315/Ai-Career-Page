@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ResumeScoreCard } from "@/components/ResumeScoreCard";
@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 // import { analyzeResume, parseResumeText, ResumeAnalysis } from "@/utils/resumeUtils";
 import { toast } from "sonner";
 import { CircleDashed, Upload, FileText, X, CheckCircle2, AlertTriangle, ChevronRight, ArrowRight, BarChart4, Lightbulb, Award } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import apiClient from "@/lib/api"; // Import apiClient
 
 // Type for the nested analysis data
@@ -31,14 +31,59 @@ interface AnalyzeApiResponse {
   analysis: ResumeAnalysis;
 }
 
+interface ResumeDetailsResponse {
+  resume: {
+    id: string;
+    originalFilename?: string;
+    uploadTimestamp?: string;
+    analysis: ResumeAnalysis | null;
+  };
+}
+
 const AnalyzeResume = () => {
   const [file, setFile] = useState<File | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [uploadedResumeId, setUploadedResumeId] = useState<string | null>(null);
   const [analysisResult, setAnalysisResult] = useState<ResumeAnalysis | null>(null); // State to hold analysis results
   const [isDragActive, setIsDragActive] = useState(false);
+  const [isViewingExisting, setIsViewingExisting] = useState(false);
 
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  // If we were navigated here from "My Resumes" with a resumeId query param,
+  // load the stored analysis (if present) and render results directly.
+  useEffect(() => {
+    const resumeIdFromQuery = searchParams.get('resumeId');
+    if (!resumeIdFromQuery) return;
+
+    setIsViewingExisting(true);
+    setUploadedResumeId(resumeIdFromQuery);
+    setFile(null);
+    setIsDragActive(false);
+
+    const fetchExisting = async () => {
+      setIsLoading(true);
+      try {
+        const resp = await apiClient.get<ResumeDetailsResponse>(`/resumes/${resumeIdFromQuery}`);
+        const analysis = resp.data?.resume?.analysis ?? null;
+        if (analysis) {
+          setAnalysisResult(analysis);
+        } else {
+          setAnalysisResult(null);
+          toast.info("This resume hasn't been analyzed yet. Click 'Analyze Now' to generate insights.");
+        }
+      } catch (error: any) {
+        console.error("Error fetching resume details:", error);
+        toast.error(error.response?.data?.message || "Failed to load resume analysis");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchExisting();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFile(null);
@@ -110,7 +155,7 @@ const AnalyzeResume = () => {
     formData.append('resumeFile', file);
 
     try {
-      const response = await apiClient.post('/api/resumes/upload', formData, {
+      const response = await apiClient.post('/resumes/upload', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -150,7 +195,7 @@ const AnalyzeResume = () => {
 
     try {
       // Use the correct API response type here
-      const response = await apiClient.post<AnalyzeApiResponse>(`/api/resumes/${uploadedResumeId}/analyze`);
+      const response = await apiClient.post<AnalyzeApiResponse>(`/resumes/${uploadedResumeId}/analyze`);
 
       // Store the nested 'analysis' object from the response data
       if (response.status === 200 && response.data?.analysis) { // Check for response.data.analysis
@@ -181,6 +226,9 @@ const AnalyzeResume = () => {
     setFile(null);
     setUploadedResumeId(null);
     setAnalysisResult(null);
+    setIsViewingExisting(false);
+    // Clear query param if present
+    navigate('/dashboard/analyze', { replace: true });
   };
 
   // Helper function to determine score text color
@@ -229,7 +277,7 @@ const AnalyzeResume = () => {
           </div>
 
           {/* Step 1: Upload Form */}
-          {!uploadedResumeId && !analysisResult && (
+          {!isViewingExisting && !uploadedResumeId && !analysisResult && (
             <Card className="mb-8 shadow-sm animate-fade-in">
               <CardHeader className="border-b bg-slate-50/80">
                 <CardTitle className="flex items-center gap-2 text-xl">
@@ -320,10 +368,12 @@ const AnalyzeResume = () => {
               <CardHeader className="border-b bg-blue-50/70">
                 <CardTitle className="flex items-center gap-2 text-xl">
                   <BarChart4 className="h-5 w-5 text-blue-500" />
-                  Step 2: Analyze Resume
+                  {isViewingExisting ? 'Analyze Uploaded Resume' : 'Step 2: Analyze Resume'}
                 </CardTitle>
                 <CardDescription>
-                  Your resume is uploaded and ready for AI analysis
+                  {isViewingExisting
+                    ? 'This resume is ready for analysis'
+                    : 'Your resume is uploaded and ready for AI analysis'}
                 </CardDescription>
               </CardHeader>
               <CardContent className="pt-6">
@@ -332,7 +382,9 @@ const AnalyzeResume = () => {
                     <CheckCircle2 className="h-8 w-8 text-green-500" />
                   </div>
                   <div>
-                    <p className="font-medium">Resume uploaded successfully</p>
+                    <p className="font-medium">
+                      {isViewingExisting ? 'Resume selected' : 'Resume uploaded successfully'}
+                    </p>
                     <p className="text-sm text-gray-600">Resume ID: {uploadedResumeId}</p>
                   </div>
                 </div>

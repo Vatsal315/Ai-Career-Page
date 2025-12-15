@@ -8,6 +8,7 @@ import {
   List, 
   HelpCircle, 
   FileEdit, 
+  LayoutTemplate,
   ChevronRight, 
   Briefcase
 } from "lucide-react";
@@ -47,6 +48,13 @@ export function DashboardSidebar() {
       path: "/dashboard/builder", 
       icon: FileText,
       count: 0 
+    },
+    { 
+      title: "Resume Templates", 
+      path: "/dashboard/templates", 
+      icon: LayoutTemplate,
+      count: 0,
+      isNew: true
     },
     { 
       title: "Job Match", 

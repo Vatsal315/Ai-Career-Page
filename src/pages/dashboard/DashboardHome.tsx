@@ -6,6 +6,7 @@ import {
   FileText, 
   BarChart, 
   FileEdit, 
+  LayoutTemplate,
   ArrowUpRight, 
   TrendingUp, 
   Calendar, 
@@ -175,7 +176,7 @@ export default function DashboardHome() {
 
       try {
         // Attempt to fetch real activities from the API
-        const response = await apiClient.get<ActivityData[]>('/api/activity/recent');
+        const response = await apiClient.get<ActivityData[]>('/activity/recent');
         const fetchedActivities = response.data.map(act => ({
           ...act,
           date: new Date(act.date).toLocaleString(),
@@ -214,6 +215,13 @@ export default function DashboardHome() {
       icon: <FileText className="h-5 w-5" />,
       link: "/dashboard/builder",
       color: "bg-emerald-50 text-emerald-700 border-emerald-200" 
+    },
+    { 
+      title: "Resume Templates", 
+      description: "Start from a professional template and edit instantly", 
+      icon: <LayoutTemplate className="h-5 w-5" />,
+      link: "/dashboard/templates",
+      color: "bg-sky-50 text-sky-700 border-sky-200"
     },
     { 
       title: "Match to Job", 

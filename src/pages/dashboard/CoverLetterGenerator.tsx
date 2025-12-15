@@ -18,6 +18,7 @@ import {
   Briefcase,
   FileEdit,
   Wand2,
+  RefreshCw,
   AlertTriangle
 } from "lucide-react";
 import { toast } from "sonner";
@@ -59,30 +60,33 @@ export default function CoverLetterGenerator() {
   const [roleName, setRoleName] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState("professional");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [coverLetter, setCoverLetter] = useState("");
   const [activeTab, setActiveTab] = useState("create");
   const [editorMode, setEditorMode] = useState(false);
   const [generationProgress, setGenerationProgress] = useState(0);
   const [error, setError] = useState(null);
 
-  // Fetch user's resumes on component mount
-  useEffect(() => {
-    const fetchResumes = async () => {
-      try {
-        const response = await apiClient.get('/api/resumes');
-        if (response.data && Array.isArray(response.data.resumes)) {
-          setResumes(response.data.resumes);
-        } else {
-          console.warn('Unexpected format for resumes:', response.data);
-          setResumes([]);
-        }
-      } catch (err) {
-        console.error("Error fetching resumes:", err);
-        toast.error("Failed to load your resumes");
+  // Fetch user's resumes
+  const fetchResumes = async () => {
+    try {
+      const response = await apiClient.get('/resumes');
+      if (response.data && Array.isArray(response.data.resumes)) {
+        setResumes(response.data.resumes);
+        toast.success(`Loaded ${response.data.resumes.length} resume(s)`);
+      } else {
+        console.warn('Unexpected format for resumes:', response.data);
         setResumes([]);
       }
-    };
+    } catch (err) {
+      console.error("Error fetching resumes:", err);
+      toast.error("Failed to load your resumes");
+      setResumes([]);
+    }
+  };
 
+  // Fetch resumes on component mount
+  useEffect(() => {
     fetchResumes();
   }, []);
 
@@ -138,7 +142,7 @@ export default function CoverLetterGenerator() {
       };
       
       // Call the backend API
-      const response = await apiClient.post('/api/cover-letter/generate', payload);
+      const response = await apiClient.post('/cover-letter/generate', payload);
       
       if (response.data && response.data.generatedCoverLetter) {
         setCoverLetter(response.data.generatedCoverLetter);
@@ -172,6 +176,45 @@ export default function CoverLetterGenerator() {
     element.click();
     document.body.removeChild(element);
     toast.success("Cover letter downloaded!");
+  };
+
+  const handleDownloadPdf = async () => {
+    if (!coverLetter?.trim()) {
+      toast.error("No cover letter to download");
+      return;
+    }
+    setIsDownloadingPdf(true);
+    try {
+      const response = await apiClient.post(
+        "/cover-letter/download",
+        { coverLetterText: coverLetter, companyName, roleName },
+        { responseType: "blob" }
+      );
+
+      const blob = new Blob([response.data], { type: "application/pdf" });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      const safe = (v: string) =>
+        (v || "")
+          .toLowerCase()
+          .trim()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/(^-|-$)/g, "")
+          .slice(0, 60) || "cover-letter";
+      link.download = `cover-letter-${safe(companyName)}-${safe(roleName)}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      toast.success("Cover letter PDF downloaded!");
+    } catch (err: any) {
+      console.error("PDF download error:", err);
+      toast.error(err.response?.data?.message || "Failed to download PDF");
+    } finally {
+      setIsDownloadingPdf(false);
+    }
   };
 
   return (
@@ -225,7 +268,19 @@ export default function CoverLetterGenerator() {
               <CardContent className="pt-6">
                 <div className="space-y-6">
                   <div className="space-y-2">
-                    <Label htmlFor="resume" className="text-gray-700">Select Resume</Label>
+                    <div className="flex justify-between items-center">
+                      <Label htmlFor="resume" className="text-gray-700">Select Resume</Label>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={fetchResumes}
+                        className="h-8 text-blue-600 hover:text-blue-700"
+                      >
+                        <RefreshCw className="h-4 w-4 mr-1" />
+                        Refresh
+                      </Button>
+                    </div>
                     <Select value={selectedResume} onValueChange={setSelectedResume}>
                       <SelectTrigger id="resume" className="border-gray-300 focus:border-blue-400">
                         <SelectValue placeholder="Select a resume" />
@@ -239,7 +294,7 @@ export default function CoverLetterGenerator() {
                           ))
                         ) : (
                           <SelectItem value="no-resumes" disabled>
-                            No resumes available
+                            No resumes available - Upload one in My Resumes page
                           </SelectItem>
                         )}
                       </SelectContent>
@@ -434,6 +489,23 @@ export default function CoverLetterGenerator() {
                     >
                       <Copy className="mr-2 h-4 w-4" />
                       Copy to Clipboard
+                    </Button>
+                    <Button
+                      onClick={handleDownloadPdf}
+                      disabled={isDownloadingPdf}
+                      className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white"
+                    >
+                      {isDownloadingPdf ? (
+                        <>
+                          <CircleDashed className="mr-2 h-4 w-4 animate-spin" />
+                          Downloading...
+                        </>
+                      ) : (
+                        <>
+                          <Download className="mr-2 h-4 w-4" />
+                          Download PDF
+                        </>
+                      )}
                     </Button>
                     <Button 
                       onClick={handleDownload}

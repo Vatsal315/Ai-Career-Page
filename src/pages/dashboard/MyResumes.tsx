@@ -12,13 +12,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 interface UploadedResumeSummary {
   id: string;
   originalFilename: string;
-  uploadTimestamp: { _seconds: number, _nanoseconds: number };
+  uploadTimestamp: string | { _seconds: number, _nanoseconds: number }; // Support both ISO string and Firestore format
   overallScore?: number;
+  analysisTimestamp?: string | { _seconds: number, _nanoseconds: number };
 }
 
 interface GeneratedResumeSummary {
   id: string;
-  createdAt: { _seconds: number, _nanoseconds: number };
+  createdAt: string | { _seconds: number, _nanoseconds: number }; // Support both ISO string and Firestore format
   inputName?: string;
   inputTargetRole?: string;
   version: number;
@@ -46,15 +47,21 @@ export default function MyResumes() {
   const [generatedResumes, setGeneratedResumes] = useState<GeneratedResumeSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
       setIsLoading(true);
       setError(null);
       try {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/87199f04-e26a-4732-af6e-c50d61b27704',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/pages/dashboard/MyResumes.tsx:fetchData',message:'fetch resumes start',data:{paths:['/resumes','/builder/generated']},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'D'})}).catch(()=>{});
+        // #endregion
+
         const [uploadedRes, generatedRes] = await Promise.all([
-          apiClient.get('/api/resumes'),
-          apiClient.get('/api/builder/generated')
+          apiClient.get('/resumes'),
+          apiClient.get('/builder/generated')
         ]);
 
         if (uploadedRes.data && Array.isArray(uploadedRes.data.resumes)) {
@@ -74,6 +81,9 @@ export default function MyResumes() {
       } catch (err: any) {
         console.error("Error fetching resumes:", err);
         const message = err.response?.data?.message || err.message || "Failed to load your resumes.";
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/87199f04-e26a-4732-af6e-c50d61b27704',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/pages/dashboard/MyResumes.tsx:catch',message:'fetch resumes failed',data:{message:String(message),status:Number(err?.response?.status||0),hasResponse:Boolean(err?.response),hasRequest:Boolean(err?.request)},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
         setError(message);
         toast.error(`Error loading resumes: ${message}`);
       } finally {
@@ -94,11 +104,30 @@ export default function MyResumes() {
     console.log(`Request to edit ${type} resume with ID: ${id}`);
   };
 
-  const handleDownload = (id: string, type: 'uploaded' | 'generated') => {
-    if (type === 'generated' && apiClient.defaults.baseURL) {
-      const downloadUrl = `${apiClient.defaults.baseURL}/builder/download/${id}`;
-      window.open(downloadUrl, '_blank');
-      toast.success(`Initiating PDF download for generated resume ${id}`);
+  const handleDownload = async (id: string, type: 'uploaded' | 'generated') => {
+    if (type === 'generated') {
+      try {
+        toast.info("Preparing PDF download...");
+        
+        const response = await apiClient.get(`/builder/download/${id}`, {
+          responseType: 'blob',
+        });
+
+        const blob = new Blob([response.data], { type: 'application/pdf' });
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `resume-${id}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+        
+        toast.success("Resume downloaded successfully!");
+      } catch (error: any) {
+        console.error("Download error:", error);
+        toast.error(error.response?.data?.message || "Failed to download resume");
+      }
     } else {
       toast.info(`Downloading ${type} resume ${id} (Not Implemented for uploaded yet)`);
     }
@@ -110,16 +139,81 @@ export default function MyResumes() {
     console.log(`Request to clone ${type} resume with ID: ${id}`);
   };
 
-  const handleViewAnalysis = (id: string) => {
-    navigate(`/analyze/${id}`);
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      const fileType = file.type;
+      
+      if (
+        fileType === "application/pdf" ||
+        fileType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      ) {
+        setUploadFile(file);
+      } else {
+        toast.error("Please upload a PDF or DOCX file");
+        setUploadFile(null);
+      }
+    }
   };
 
-  const formatTimestamp = (timestamp: { _seconds: number, _nanoseconds: number }): string => {
-    if (!timestamp || typeof timestamp._seconds !== 'number') {
+  const handleUploadResume = async () => {
+    if (!uploadFile) {
+      toast.error("Please select a file to upload");
+      return;
+    }
+
+    setIsUploading(true);
+    const formData = new FormData();
+    formData.append('resumeFile', uploadFile);
+
+    try {
+      const response = await apiClient.post('/resumes/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      if (response.status === 201) {
+        toast.success("Resume uploaded successfully!");
+        setUploadFile(null);
+        // Clear the file input
+        const input = document.getElementById('resume-upload-input') as HTMLInputElement;
+        if (input) input.value = "";
+        
+        // Refresh the resumes list
+        const uploadedRes = await apiClient.get('/resumes');
+        if (uploadedRes.data && Array.isArray(uploadedRes.data.resumes)) {
+          setUploadedResumes(uploadedRes.data.resumes);
+        }
+      }
+    } catch (error: any) {
+      console.error("Upload Error:", error);
+      toast.error(error.response?.data?.message || "Failed to upload resume");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleViewAnalysis = (id: string) => {
+    // Route defined in App.tsx: /dashboard/analyze (no :id param route exists)
+    navigate(`/dashboard/analyze?resumeId=${encodeURIComponent(id)}`);
+  };
+
+  const formatTimestamp = (timestamp: string | { _seconds: number, _nanoseconds: number }): string => {
+    if (!timestamp) {
       return 'Date unavailable';
     }
     try {
-      const date = new Date(timestamp._seconds * 1000);
+      let date: Date;
+      if (typeof timestamp === 'string') {
+        // ISO string format from local storage
+        date = new Date(timestamp);
+      } else if (typeof timestamp._seconds === 'number') {
+        // Firestore timestamp format
+        date = new Date(timestamp._seconds * 1000);
+      } else {
+        return 'Date unavailable';
+      }
       return format(date, 'PPP p');
     } catch (e) {
       console.error("Error formatting timestamp:", e);
@@ -189,9 +283,61 @@ export default function MyResumes() {
         </Button>
       </div>
 
+      {/* Upload Resume Section */}
+      <Card className="border-dashed border-2 border-blue-300 bg-blue-50/50">
+        <CardHeader>
+          <CardTitle className="flex items-center text-blue-700">
+            <UploadCloud className="mr-2 h-5 w-5" />
+            Upload New Resume
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+            <div className="flex-1">
+              <input
+                type="file"
+                id="resume-upload-input"
+                accept=".pdf,.docx"
+                onChange={handleFileChange}
+                className="hidden"
+              />
+              <label
+                htmlFor="resume-upload-input"
+                className="inline-flex items-center justify-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 cursor-pointer"
+              >
+                <FileText className="mr-2 h-4 w-4" />
+                Choose File
+              </label>
+              {uploadFile && (
+                <span className="ml-3 text-sm text-gray-600">
+                  Selected: {uploadFile.name}
+                </span>
+              )}
+            </div>
+            <Button
+              onClick={handleUploadResume}
+              disabled={!uploadFile || isUploading}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              {isUploading ? (
+                <>
+                  <CircleDashed className="mr-2 h-4 w-4 animate-spin" />
+                  Uploading...
+                </>
+              ) : (
+                <>
+                  <UploadCloud className="mr-2 h-4 w-4" />
+                  Upload Resume
+                </>
+              )}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
       <section>
         <h3 className="text-2xl font-semibold mb-4 flex items-center">
-          <UploadCloud className="mr-3 h-6 w-6 text-theme-blue" /> Uploaded Resumes
+          <FileText className="mr-3 h-6 w-6 text-theme-blue" /> Uploaded Resumes
         </h3>
         {uploadedResumes.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -239,8 +385,8 @@ export default function MyResumes() {
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={!resume.overallScore}
-                    title={!resume.overallScore ? "Resume not yet analyzed" : "View Analysis"}
+                    disabled={resume.overallScore === undefined}
+                    title={resume.overallScore === undefined ? "Resume not yet analyzed" : "View Analysis"}
                     onClick={() => handleViewAnalysis(resume.id)}
                   >
                     View Analysis
